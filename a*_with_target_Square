@@ -1,0 +1,194 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+import heapq
+from collections import deque
+
+class AStarWithTargets:
+    def __init__(self, start, goal, obstacles, target_nodes, grid_size=1.0, target_threshold=1.5):
+        self.start = tuple(start)
+        self.goal = tuple(goal)
+        self.obstacles = obstacles  # [(center, half_extent_x, half_extent_y, half_extent_z), ...]
+        self.target_nodes = deque(target_nodes)
+        self.grid_size = grid_size
+        self.target_threshold = target_threshold
+        self.open_list = []
+        self.closed_list = set()
+        self.g_scores = {self.start: 0}
+        self.parents = {}
+        self.visited_nodes = []
+
+    def heuristic(self, node, target):
+        return np.linalg.norm(np.array(node) - np.array(target))
+
+    def neighbors(self, node):
+        x_min, x_max = 0, 30
+        y_min, y_max = 0, 30
+        z_min, z_max = 0, 30
+
+        moves = [(1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)]
+        neighbors = []
+        for move in moves:
+            neighbor = tuple(np.array(node) + np.array(move) * self.grid_size)
+
+            if (x_min <= neighbor[0] <= x_max and
+                y_min <= neighbor[1] <= y_max and
+                z_min <= neighbor[2] <= z_max and
+                not self.is_colliding(neighbor)):
+                neighbors.append(neighbor)
+        
+        return neighbors
+
+    def is_colliding(self, point):
+        for (center, hx, hy, hz) in self.obstacles:
+            if (center[0] - hx <= point[0] <= center[0] + hx and
+                center[1] - hy <= point[1] <= center[1] + hy and
+                center[2] - hz <= point[2] <= center[2] + hz):
+                return True
+        return False
+
+    def reconstruct_path(self):
+        path = []
+        node = self.goal
+        while node in self.parents:
+            path.append(node)
+            node = self.parents[node]
+        path.append(self.start)
+        return path[::-1]
+
+    def calculate_path_length(self, path):
+        length = 0
+        for i in range(1, len(path)):
+            length += np.linalg.norm(np.array(path[i]) - np.array(path[i - 1]))
+        return length
+
+    def _update_target(self):
+        self.target_nodes.popleft()
+        if self.target_nodes:
+            return self.target_nodes[0]
+        return self.goal
+
+    def _reorder_open_list(self):
+        self.open_list = [(self.f_value(node, self.current_target), node) for _, node in self.open_list]
+        heapq.heapify(self.open_list)
+
+    def f_value(self, node, target):
+        h_goal = self.heuristic(node, self.goal)
+        h_target = self.heuristic(node, target)
+        return self.g_scores[node] + h_goal + h_target
+
+    def run(self):
+        self.current_target = self.target_nodes[0] if self.target_nodes else self.goal
+        heapq.heappush(self.open_list, (self.heuristic(self.start, self.current_target), self.start))
+        counter = 0
+        while self.open_list:
+            _, current = heapq.heappop(self.open_list)
+
+            if current == self.goal:
+                print(counter)
+                return self.reconstruct_path()
+
+            self.closed_list.add(current)
+            self.visited_nodes.append(current)
+
+            for neighbor in self.neighbors(current):
+                if neighbor in self.closed_list:
+                    continue
+
+                if neighbor == self.current_target and self.current_target != self.goal:
+                    self.current_target = self._update_target()
+                    self._reorder_open_list()
+                   
+
+                tentative_g_score = self.g_scores[current] + self.grid_size
+
+                if neighbor not in self.g_scores or tentative_g_score < self.g_scores[neighbor]:
+                    self.g_scores[neighbor] = tentative_g_score
+                    heapq.heappush(self.open_list, (self.f_value(neighbor, self.current_target), neighbor))
+                    self.parents[neighbor] = current
+
+        print("Path not found.")
+        return None
+
+# Plotting function for cuboid obstacles and visited nodes
+def plot_3d_path(start, goal, obstacles, path, visited_nodes, target_nodes):
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+
+    ax.scatter(*start, color='green', s=100, label='Start')
+    ax.scatter(*goal, color='red', s=100, label='Goal')
+    for target in target_nodes:
+        ax.scatter(*target, color='orange', s=10, label='Target Node' if target == target_nodes[0] else "")
+
+    # Plot cuboid obstacles as surfaces
+    for (center, hx, hy, hz) in obstacles:
+        x_range = [center[0] - hx, center[0] + hx]
+        y_range = [center[1] - hy, center[1] + hy]
+        z_range = [center[2] - hz, center[2] + hz]
+
+        # Plot the six faces of each cuboid
+        for x in x_range:
+            Y, Z = np.meshgrid(y_range, z_range)
+            ax.plot_surface(np.full_like(Y, x), Y, Z, color="gray", alpha=0.5)
+        for y in y_range:
+            X, Z = np.meshgrid(x_range, z_range)
+            ax.plot_surface(X, np.full_like(X, y), Z, color="gray", alpha=0.5)
+        for z in z_range:
+            X, Y = np.meshgrid(x_range, y_range)
+            ax.plot_surface(X, Y, np.full_like(X, z), color="gray", alpha=0.5)
+
+    # Plot visited nodes
+    if visited_nodes:
+        visited_nodes = np.array(visited_nodes)
+        ax.scatter(visited_nodes[:, 0], visited_nodes[:, 1], visited_nodes[:, 2], color='cyan', s=1, label='Visited Nodes')
+
+    # Plot path
+    if path:
+        path = np.array(path)
+        ax.plot(path[:, 0], path[:, 1], path[:, 2], color='blue', linewidth=2, label='Path')
+
+    ax.set_xlim(0, 30)
+    ax.set_ylim(0, 30)
+    ax.set_zlim(0, 30)
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
+    plt.legend()
+    plt.show()
+
+# Example usage
+start = (3, 3, 3)
+goal = (27, 24, 6)
+
+# Define cuboid obstacles as (center, half_extent_x, half_extent_y, half_extent_z)
+obstacles = [
+    ((12, 12, 4), 3, 3, 3),
+    ((18, 20, 5), 2, 4, 2),
+    ((25, 15, 7), 3, 2, 2),
+    ((8, 25, 6), 4, 3, 2),
+    ((15, 10, 6), 2, 2, 3)
+]
+
+# Updated Target Nodes Outside Collision Radii
+target_nodes = [
+       # Approach the first obstacle
+     # Clear the fifth obstacle
+    (27, 24, 6)    # Final approach to the goal
+]
+
+
+
+# Run the optimized A* algorithm with target nodes
+astar_optimized = AStarWithTargets(start, goal, obstacles, target_nodes, grid_size=1.0)
+optimized_path = astar_optimized.run()
+
+# Display the number of visited nodes
+print("Number of visited nodes:", len(astar_optimized.visited_nodes))
+
+# Calculate and print the path length if a path was found
+if optimized_path:
+    path_length = astar_optimized.calculate_path_length(optimized_path)
+    print("Length of the path:", path_length)
+
+# Plot the optimized path and visited nodes
+plot_3d_path(start, goal, obstacles, optimized_path, astar_optimized.visited_nodes, target_nodes)
